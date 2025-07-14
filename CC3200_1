@@ -92,9 +92,16 @@ void loop() {
   // 處理 TCP 新連線
   WiFiClient newClient = tcpServer.available();
   if (newClient) {
-    tcpClient = newClient;
-    Serial.println("TCP Client connected");
-  }
+    // 檢查是否為新的客戶端（比較 IP 位址）
+    if (!tcpClient || !tcpClient.connected() || 
+      newClient.remoteIP() != tcpClient.remoteIP()) {
+      tcpClient = newClient;
+      Serial.println("TCP client changed");
+      Serial.print("New client IP: ");
+      Serial.println(tcpClient.remoteIP());
+      }
+}
+
 
   // --- [1] 接收 TCP 指令 → 傳給 F2837x via UART
   if (tcpClient && tcpClient.connected()) {
