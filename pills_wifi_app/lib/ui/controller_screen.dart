@@ -3,11 +3,24 @@ import '../services/pills_connection_service.dart';
 import 'widgets/joystick_left.dart';
 import 'widgets/joystick_right.dart';
 
-class ControllerScreen extends StatelessWidget {
+class ControllerScreen extends StatefulWidget {
   const ControllerScreen({super.key});
 
+  @override
+  State<ControllerScreen> createState() => _ControllerScreenState();
+}
+
+class _ControllerScreenState extends State<ControllerScreen> {
+  final connectionService = PillsConnectionService();
+
+  @override
+  void initState() {
+    super.initState();
+    connectionService.init();
+  }
+
   void sendControl(String control, dynamic data) {
-    PillsConnectionService().sendCommand(control, data);
+    connectionService.sendCommand(control, data);
   }
 
   Widget buildControlButton(IconData icon, VoidCallback onPressed) {
@@ -32,13 +45,13 @@ class ControllerScreen extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: <Widget>[
-                  buildControlButton(Icons.play_arrow, () => sendControl('start', <dynamic, dynamic>{})),
-                  buildControlButton(Icons.pause, () => sendControl('pause', <dynamic, dynamic>{})),
-                  buildControlButton(Icons.settings, () => sendControl('config', <dynamic, dynamic>{})),
+                  buildControlButton(Icons.play_arrow, () => sendControl('start', null)),
+                  buildControlButton(Icons.pause, () => sendControl('pause', null)),
+                  buildControlButton(Icons.settings, () => sendControl('config', null)),
                   const Text('WCE Status', style: TextStyle(color: Colors.white)),
-                  buildControlButton(Icons.sync, () => sendControl('sync', <dynamic, dynamic>{})),
-                  buildControlButton(Icons.camera_alt, () => sendControl('log', <dynamic, dynamic>{})),
-                  buildControlButton(Icons.stop, () => sendControl('stop', <dynamic, dynamic>{})),
+                  buildControlButton(Icons.sync, () => sendControl('sync', null)),
+                  buildControlButton(Icons.camera_alt, () => sendControl('log', null)),
+                  buildControlButton(Icons.stop, () => sendControl('stop', null)),
                 ],
               ),
             ),
@@ -59,5 +72,11 @@ class ControllerScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    connectionService.dispose();
+    super.dispose();
   }
 }
