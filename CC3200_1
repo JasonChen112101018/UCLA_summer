@@ -91,9 +91,8 @@ void loop() {
 
   // 處理 TCP 新連線
   WiFiClient newClient = tcpServer.available();
-  if (newClient && (!tcpClient || !tcpClient.connected())) {
+  if (newClient){
     tcpClient = newClient;
-    Serial.println("TCP client changed");
   }
 
 
