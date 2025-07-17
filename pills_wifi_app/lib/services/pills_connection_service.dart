@@ -26,7 +26,7 @@ class PillsConnectionService {
   Future<bool> init() async {
     // 防止重複初始化
     if (_socket != null) {
-      debugPrint('ℹ️ UDP Service already initialized.');
+      debugPrint('UDP Service already initialized.');
       return true;
     }
 
@@ -76,7 +76,7 @@ class PillsConnectionService {
   /// 啟動心跳，每秒發送一次
   void startHeartbeat() {
     stopHeartbeat(); // 先停止舊的，以防萬一
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       // 定期發送一個專門的 "heartbeat" 指令
       sendCommand('heartbeat', null); 
     });
