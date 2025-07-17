@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/pills_connection_service.dart';
+import '../services/pills_connection_service.dart'; // 確保這是你的 UDP 服務檔案
 import 'widgets/joystick_left.dart';
 import 'widgets/joystick_right.dart';
 
@@ -11,15 +11,17 @@ class ControllerScreen extends StatefulWidget {
 }
 
 class _ControllerScreenState extends State<ControllerScreen> {
-  final connectionService = PillsConnectionService();
+  // 直接獲取服務的單例實例，因為它已經在 main.dart 中被初始化
+  final PillsConnectionService connectionService = PillsConnectionService();
 
   @override
   void initState() {
     super.initState();
-    connectionService.init();
+    // 服務已在 App 啟動時初始化，此處無需任何操作
   }
 
   void sendControl(String control, dynamic data) {
+    // 直接使用服務發送命令
     connectionService.sendCommand(control, data);
   }
 
@@ -76,7 +78,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
 
   @override
   void dispose() {
-    connectionService.dispose();
+    // 服務的生命週期由 App 管理，此頁面不應關閉它
     super.dispose();
   }
 }
