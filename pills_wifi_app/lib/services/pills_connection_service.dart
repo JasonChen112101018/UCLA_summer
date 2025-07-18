@@ -93,7 +93,7 @@ class PillsConnectionService {
   void startPeriodicFetching({
     required String command,
     dynamic data,
-    Duration interval = const Duration(milliseconds: 100), // 提高搖桿發送頻率
+    Duration interval = const Duration(milliseconds: 500), // 提高搖桿發送頻率
   }) {
     stopPeriodicFetching();
 
@@ -135,7 +135,7 @@ class PillsConnectionService {
     if (command == 'left_stick' || command == 'right_stick') {
       if (data is Map) {
          // 範例: command:x,y
-         payload = '$command:${data['x']},${data['y']}';
+         payload = '2';
       }
     }
     // 使用 STX / ETX 封包包起來
