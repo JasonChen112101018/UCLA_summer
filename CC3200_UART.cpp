@@ -2,10 +2,16 @@
  * ===================================================================================
  * Hardware UART to WiFi Bridge - FINAL NON-BLOCKING STATE MACHINE VERSION
  *
- * 這是最終的修改版。它使用一個「非阻塞式狀態機」來處理 UART 的接收。
- * 這種設計可以確保 loop() 函式永遠不會被長時間阻塞，從而讓 WiFi 核心
- * 有足夠的 CPU 時間來處理背景網路任務，解決了與阻塞代碼的衝突問題。
- * 這是實現此類橋接器最穩定可靠的軟體架構。
+ * 【雙向通訊升級版】
+ * 這個版本被修改為一個真正的全雙工橋接器。
+ * 它不僅能處理從 WiFi -> UART 的請求/回應流程，
+ * 還能隨時接收並轉發由 UART 端主動發送的任何訊息。
+ *
+ * 主要改動：
+ * - 使用一個通用的 `handleUartInput()` 函式取代了原來的 `handleUartResponse()`。
+ * - 這個新的函式會持續監聽 UART，無論系統處於何種狀態。
+ * - 當收到 UART 訊息後，它會判斷這是一個「主動訊息」還是「回應」，
+ * 並相應地更新狀態機，實現了真正的雙向非阻塞通訊。
  * ===================================================================================
  */
 #include <WiFi.h>
@@ -25,7 +31,6 @@ uint16_t remoteUdpPort = 0;
 
 // ===== Hardware UART (Serial1) 設定 =====
 const long C2000_BAUD_RATE = 2500;
-const unsigned long C2000_RESPONSE_TIMEOUT_MS = 1000; // 總回應超時 (1秒)
 
 // ===== 傳輸控制碼 =====
 #define STX 0x02 // Start of Text
@@ -43,23 +48,30 @@ const unsigned long blinkInterval = 500;
 
 
 // =======================================================
-// ===== 非阻塞式 UART 接收狀態機 =====
+// ===== 主狀態機 (控制指令流) =====
 // =======================================================
-
-// 1. 定義接收狀態
-enum UartRxState {
-  IDLE,               // 閒置狀態，未在等待任何回應
-  WAITING_FOR_RESPONSE  // 已發送命令，正在等待回應
+enum UartTxState {
+  IDLE,                 // 閒置狀態，可接受來自 WiFi 的新指令
+  WAITING_FOR_RESPONSE  // 已發送命令，正在等待 C2000 回應
 };
-
-// 2. 宣告狀態變數
-UartRxState uartState = IDLE;
-String uartBuffer = "";
+UartTxState uartState = IDLE;
 unsigned long commandSentTimestamp = 0;
+const unsigned long C2000_RESPONSE_TIMEOUT_MS = 1000; // 總回應超時 (1秒)
+
+
+// =======================================================
+// ===== 新增: UART 接收器狀態變數 =====
+// =======================================================
+// 這些變數專門用來處理 UART 的即時數據接收
+String uartRxBuffer = "";          // 用於組裝來自 UART 的封包
+bool isReceivingUartPacket = false; // 標記是否正在接收一個封包 (收到STX後為true)
+unsigned long uartPacketStartTime = 0;   // 記錄開始接收封包的時間，用於處理不完整的封包超時
+const unsigned long UART_INCOMPLETE_PACKET_TIMEOUT_MS = 200; // 如果封包開始後200ms內沒結束，就丟棄
+
 
 // === 函式原型 ===
 void sendToC2000(const String &msg);
-void handleUartResponse(); // <--- 新增的狀態機處理函式
+void handleUartInput(); // <--- 已修改為通用的 UART 輸入處理器
 void sendToUDPClient(const String &msg);
 void handleLEDs();
 void handleUDPInput();
@@ -68,8 +80,8 @@ void handleUDPInput();
 void setup() {
   Serial.begin(115200);
   while (!Serial);
-  Serial.println("\n\nNon-Blocking UART/WiFi Bridge Initializing...");
-  Serial.println("==============================================");
+  Serial.println("\n\nBidirectional Non-Blocking UART/WiFi Bridge Initializing...");
+  Serial.println("==========================================================");
 
   Serial1.begin(C2000_BAUD_RATE);
   Serial.print("Hardware UART (Serial1) started with Baud Rate: ");
@@ -101,12 +113,19 @@ void setup() {
 }
 
 void loop() {
-  handleLEDs();        // 處理 LED (非阻塞)
-  handleUDPInput();      // 處理 UDP 輸入 (非阻塞)
-  handleUartResponse();  // 處理 UART 回應 (非阻塞) <--- 每次循環都會檢查
+  handleLEDs();       // 處理 LED (非阻塞)
+  handleUDPInput();   // 處理 UDP 輸入 (非阻塞)
+  handleUartInput();  // 處理 UART 輸入 (非阻塞) <--- 每次循環都會檢查，實現雙向通訊
+  
+  // 檢查從 WiFi 發送指令後，C2000 是否超時未回應
+  if (uartState == WAITING_FOR_RESPONSE && millis() - commandSentTimestamp > C2000_RESPONSE_TIMEOUT_MS) {
+    Serial.println("Timeout: Failed to receive response from C2000.");
+    sendToUDPClient("TIMEOUT"); // 可以選擇性地通知客戶端超時
+    uartState = IDLE; // 超時，返回閒置狀態，準備接收新指令
+  }
 }
 
-// ===== 處理 UDP 的輸入 (只發送，不接收) =====
+// ===== 處理 UDP 的輸入 =====
 void handleUDPInput() {
   int packetSize = udp.parsePacket();
   if (packetSize > 0) {
@@ -135,78 +154,71 @@ void handleUDPInput() {
         // 發送後，切換到等待狀態，並記錄時間戳
         uartState = WAITING_FOR_RESPONSE;
         commandSentTimestamp = millis();
-        uartBuffer = ""; // 清空緩衝區
       } else {
         Serial.println("Warning: A command is already in progress. Ignoring new command.");
+        // 可以選擇性地回傳一個 "BUSY" 訊息給客戶端
+        // sendToUDPClient("BUSY");
       }
     }
   }
 }
 
-// ===== 新增: UART 狀態機處理函式 =====
-// 這個函式會被 loop() 不斷呼叫，以非阻塞的方式檢查 Serial1
-void handleUartResponse() {
-  // 只有在 "等待回應" 狀態下才執行此函式
-  if (uartState != WAITING_FOR_RESPONSE) {
-    return;
-  }
-
-  // --- 檢查總超時 ---
-  if (millis() - commandSentTimestamp > C2000_RESPONSE_TIMEOUT_MS) {
-    Serial.println("\n----------------- !!! DEBUG INFO !!! -----------------");
-    Serial.println("Timeout: Failed to receive complete packet from C2000.");
-    
-    // 【關鍵除錯點】: 印出在超時前，緩衝區裡到底收到了什麼東西
-    if (uartBuffer.length() > 0) {
-      Serial.print("Partial data received before timeout: [");
-      // 逐一印出每個字元的 HEX 值，這樣所有字元(包括控制碼)都看得見
-      for (unsigned int i = 0; i < uartBuffer.length(); i++) {
-        char c = uartBuffer.charAt(i);
-        Serial.print("0x");
-        if (c < 16) Serial.print("0"); // 補零
-        Serial.print(c, HEX);
-        Serial.print(" ");
-      }
-      Serial.println("]");
-    } else {
-      Serial.println("No data was received from Serial1 at all.");
-    }
-    Serial.println("----------------------------------------------------\n");
-    
-    uartState = IDLE; // 超時，返回閒置狀態
-    return;
-  }
-
-  // --- 處理接收到的資料 ---
+// ===== 修改後: 通用的 UART 輸入處理函式 =====
+// 這個函式會被 loop() 不斷呼叫，以非阻塞的方式檢查並處理所有來自 Serial1 的訊息
+void handleUartInput() {
+  // --- 1. 處理接收到的資料 ---
   while (Serial1.available() > 0) {
     char ch = Serial1.read();
 
-    // 如果緩衝區是空的，那麼第一個進來的字元必須是 STX
-    if (uartBuffer.length() == 0 && ch != STX) {
-      continue; // 忽略封包開始前的任何雜訊
-    }
-    
-    uartBuffer += ch;
-    
-    // 檢查剛收到的字元是否是結束符
-    if (ch == ETX) {
-      // 驗證收到的封包是否真的以 STX 開頭
-      if (uartBuffer.charAt(0) == STX) {
-        // 成功！
-        Serial.print("UART -> UDP (Success): ");
-        String payload = uartBuffer.substring(1, uartBuffer.length() - 1);
-        Serial.println(payload);
-        sendToUDPClient(payload);
-      } else {
-        Serial.println("Error: Received packet ended with ETX but did not start with STX.");
+    // 如果還沒開始接收，就等待 STX 的出現
+    if (!isReceivingUartPacket) {
+      if (ch == STX) {
+        isReceivingUartPacket = true;
+        uartPacketStartTime = millis(); // 開始計時
+        uartRxBuffer = ""; // 清空緩衝區
       }
+      // 如果不是STX，就忽略
+      continue;
+    }
+
+    // 如果已經在接收中
+    if (ch == ETX) {
+      // 收到結束符，一個完整的封包接收完畢
+      Serial.print("UART -> WiFi (Success): ");
+      Serial.println(uartRxBuffer);
+      sendToUDPClient(uartRxBuffer);
       
-      // 處理完畢，返回閒置狀態
-      uartState = IDLE;
-      return;
+      // 【關鍵】如果系統正在等待回應，那麼這個封包就是我們要的回應
+      // 將狀態切換回 IDLE，這樣 WiFi 端才能發送下一個指令
+      if (uartState == WAITING_FOR_RESPONSE) {
+        Serial.println("Info: Response received, system is now IDLE.");
+        uartState = IDLE;
+      }
+
+      // 重置接收狀態
+      isReceivingUartPacket = false;
+      uartRxBuffer = "";
+      
+    } else {
+      // 是一般的資料位元，將其加入緩衝區
+      uartRxBuffer += ch;
     }
   }
+
+  // --- 2. 處理不完整的封包超時 ---
+  if (isReceivingUartPacket && millis() - uartPacketStartTime > UART_INCOMPLETE_PACKET_TIMEOUT_MS) {
+    Serial.println("\n--- UART RX Error ---");
+    Serial.println("Error: Received STX but no ETX within timeout.");
+    Serial.print("Discarded partial data: [");
+    Serial.print(uartRxBuffer);
+    Serial.println("]\n");
+
+    // 重置接收狀態，丟棄不完整的封包
+    isReceivingUartPacket = false;
+    uartRxBuffer = "";
+  }
 }
+
 
 // ===== 將字串透過 Hardware UART 發送到 C2000 =====
 void sendToC2000(const String &msg) {
