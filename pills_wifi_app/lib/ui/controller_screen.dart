@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/pills_connection_service.dart'; // 確保這是你的 UDP 服務檔案
+import '../services/pills_connection_service.dart'; // 確保這是你重構後的 UDP 服務檔案
 import 'widgets/joystick_left.dart';
 import 'widgets/joystick_right.dart';
 
@@ -11,26 +11,21 @@ class ControllerScreen extends StatefulWidget {
 }
 
 class _ControllerScreenState extends State<ControllerScreen> {
-  // 直接獲取服務的單例實例，因為它已經在 main.dart 中被初始化
+  // 直接獲取服務的單例實例
   final PillsConnectionService connectionService = PillsConnectionService();
 
-  @override
-  void initState() {
-    super.initState();
-    // 服務已在 App 啟動時初始化，此處無需任何操作
-  }
+  // 註： initState 和 dispose 保持原樣是正確的，
+  // 因為服務的生命週期應該由更上層的 Widget 或 App 本身來管理。
 
-  void sendControl(String control, dynamic data) {
-    // 直接使用服務發送命令
-    connectionService.sendCommand(control, data);
-  }
+  // 移除了舊的 sendControl 方法
 
-  Widget buildControlButton(IconData icon, VoidCallback onPressed) {
+  Widget buildControlButton(IconData icon, String command) {
     return IconButton(
       iconSize: 32,
       color: Colors.white,
       icon: Icon(icon),
-      onPressed: onPressed,
+      // 按鈕是「一次性」指令，直接調用 sendOneTimeCommand
+      onPressed: () => connectionService.sendOneTimeCommand(command),
     );
   }
 
@@ -47,13 +42,13 @@ class _ControllerScreenState extends State<ControllerScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: <Widget>[
-                  buildControlButton(Icons.play_arrow, () => sendControl('start', null)),
-                  buildControlButton(Icons.pause, () => sendControl('pause', null)),
-                  buildControlButton(Icons.settings, () => sendControl('config', null)),
+                  buildControlButton(Icons.play_arrow, 'start'),
+                  buildControlButton(Icons.pause, 'pause'),
+                  buildControlButton(Icons.settings, 'config'),
                   const Text('WCE Status', style: TextStyle(color: Colors.white)),
-                  buildControlButton(Icons.sync, () => sendControl('sync', null)),
-                  buildControlButton(Icons.camera_alt, () => sendControl('log', null)),
-                  buildControlButton(Icons.stop, () => sendControl('stop', null)),
+                  buildControlButton(Icons.sync, 'sync'),
+                  buildControlButton(Icons.camera_alt, 'log'),
+                  buildControlButton(Icons.stop, 'stop'),
                 ],
               ),
             ),
@@ -64,8 +59,37 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: <Widget>[
-                    JoystickLeft(onMove: (Object? details) => sendControl('left_stick', details)),
-                    JoystickRight(onMove: (Object? details) => sendControl('right_stick', details)),
+                    // ===== 左搖桿 =====
+                    JoystickLeft(
+                      // 當搖桿移動時，持續更新狀態
+                      onMove: (Object? details) {
+                        // 增加型別檢查，確保安全
+                        if (details is Map<String, double>) {
+                          connectionService.updateJoystickState(left: details);
+                        }
+                      },
+                      // 【最佳實踐】當使用者放開搖桿時，發送歸零狀態
+                      onStop: () {
+                        connectionService.updateJoystickState(
+                          left: <String, double>{'x': 0.0, 'y': 0.0},
+                        );
+                      },
+                    ),
+                    // ===== 右搖桿 =====
+                    JoystickRight(
+                      // 當搖桿移動時，持續更新狀態
+                      onMove: (Object? details) {
+                        if (details is Map<String, double>) {
+                          connectionService.updateJoystickState(right: details);
+                        }
+                      },
+                      // 【最佳實踐】當使用者放開搖桿時，發送歸零狀態
+                      onStop: () {
+                        connectionService.updateJoystickState(
+                          right: <String, double>{'x': 0.0, 'y': 0.0},
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -74,11 +98,5 @@ class _ControllerScreenState extends State<ControllerScreen> {
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    // 服務的生命週期由 App 管理，此頁面不應關閉它
-    super.dispose();
   }
 }

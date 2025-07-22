@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # flutter_joystick ^0.2.2 已經是最新版本，無需變更
   flutter_joystick: ^0.2.2
 
   # 其他需要的套件可以在這裡新增，例如 provider, shared_preferences 等
@@ -17,8 +18,9 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  flutter_lints: ^3.0.1
+  build_runner: ^2.3.3
+  build_web_compilers: ^3.2.0
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true

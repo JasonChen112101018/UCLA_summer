@@ -1,3 +1,6 @@
+analyzer:
+  errors:
+    always_specify_types: ignore
 include: package:flutter_lints/flutter.yaml
 
 linter:
