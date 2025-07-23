@@ -1,51 +1,54 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'dart:io';
+import 'dart:developer' as developer;
 
+/// A robust service for managing UDP communication with the capsule endoscopy bridge (CC3200).
+///
+/// This service uses a unified send loop to manage command sending at a fixed rate (FPS),
+/// prioritizing one-time commands, then continuous movement data (joystick/throttle), 
+/// and finally sending a heartbeat to maintain the connection.
 class PillsConnectionService {
+  // --- Singleton Pattern ---
   factory PillsConnectionService() => _instance;
-
   PillsConnectionService._internal();
-  static final PillsConnectionService _instance =
-      PillsConnectionService._internal();
+  static final PillsConnectionService _instance = PillsConnectionService._internal();
 
+  // --- Network & Socket ---
   RawDatagramSocket? _socket;
-  Timer? _fetchTimer; // 用於定期發送搖桿等重複指令的計時器
-  Timer? _heartbeatTimer; // 用於維持連線的心跳計時器
-
-  final StreamController<String> _responseController =
-      StreamController<String>.broadcast();
-  Stream<String> get responseStream => _responseController.stream;
-
-  final String targetIp = '192.168.1.1';
-  final int targetPort = 8080;
+  final String targetIp = '192.168.1.1'; // Target IP of the CC3200 AP
+  final int targetPort = 8080;          // Target Port on the CC3200
   InternetAddress? _targetAddress;
 
-  // 當前拉桿強度值，供定期發送使用
-  double _currentThrottleIntensity = 0.0;
-  // 當前右搖桿狀態，供定期發送使用
-  Map<String, double> _currentRightStick = {'x': 0.0, 'y': 0.0};
+  // --- Main Sending Loop Timer ---
+  Timer? _sendLoopTimer;
 
-  /// 初始化並綁定 UDP Socket
+  // --- State Management ---
+  // These variables hold the latest state from the UI. The loop reads them.
+  Map<String, double>? _latestJoystickData;
+  double? _latestThrottleData;
+  String? _oneTimeCommand; // A queue for single, important commands
+
+  // --- Response Stream ---
+  // Listens for any messages sent back from the C2000.
+  final StreamController<String> _responseController = StreamController<String>.broadcast();
+  Stream<String> get responseStream => _responseController.stream;
+
+  /// Initializes the UDP service, binds the socket, and starts the main communication loop.
+  /// Returns true on success, false on failure.
   Future<bool> init() async {
-    // 防止重複初始化
     if (_socket != null) {
-      debugPrint('UDP Service already initialized.');
+      developer.log('UDP Service already initialized.');
       return true;
     }
 
+    developer.log('Initializing UDP Connection Service...');
     try {
       _targetAddress = InternetAddress(targetIp);
-    } catch (e) {
-      debugPrint('❌ Invalid target IP address: $e');
-      return false;
-    }
-
-    try {
       _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      debugPrint('✅ UDP Socket bound to local port: ${_socket!.port}');
+      developer.log('✅ UDP Socket bound to local port: ${_socket!.port}');
 
+      // Start listening for any incoming messages from the capsule
       _socket!.listen(
         (RawSocketEvent event) {
           if (event == RawSocketEvent.read) {
@@ -53,137 +56,139 @@ class PillsConnectionService {
             if (datagram == null) return;
 
             final String message = utf8.decode(datagram.data);
-            debugPrint(
-                'CC3200 response from ${datagram.address.address}:${datagram.port}: $message');
+            developer.log('⬅️ MSG from Capsule: $message');
             _responseController.add(message);
           }
         },
         onError: (error) {
-          debugPrint('❌ UDP Error: $error');
-          dispose();
+          developer.log('❌ UDP Socket Error: $error');
+          dispose(); // Clean up on error
         },
         onDone: () {
-          debugPrint('❌ UDP Socket closed');
+          developer.log('UDP Socket closed.');
           dispose();
         },
       );
 
-      // 啟動心跳機制
-      startHeartbeat();
+      // Start the main loop to handle sending commands
+      _startSendLoop();
       return true;
     } catch (e) {
-      debugPrint('❌ Failed to bind UDP socket: $e');
+      developer.log('❌ Failed to initialize UDP socket: $e');
       _socket = null;
       return false;
     }
   }
-  
-  /// 啟動心跳，每秒發送一次
-  void startHeartbeat() {
-    stopHeartbeat(); // 先停止舊的，以防萬一
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
-      // 定期發送一個專門的 "heartbeat" 指令
-      sendCommand('heartbeat', null); 
+
+  /// Starts the unified send loop. This is the heart of the service.
+  void _startSendLoop() {
+    stopSendLoop(); // Ensure no other loop is running
+
+    // Set the desired FPS. 20 FPS is a great, stable target for this application.
+    const int fps = 20;
+    const int intervalMs = 1000 ~/ fps;
+
+    _sendLoopTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (timer) {
+      _executeSendLogic();
     });
-    debugPrint('💓 Heartbeat started.');
+
+    developer.log('✅ Unified send loop started at $fps FPS (${intervalMs}ms interval).');
   }
 
-  /// 停止心跳
-  void stopHeartbeat() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
-  }
-
-  /// 啟動定期抓取數據 (例如搖桿或拉桿)
-  void startPeriodicFetching({
-    required String command,
-    dynamic data,
-    Duration interval = const Duration(milliseconds: 100), // 提高搖桿發送頻率
-  }) {
-    stopPeriodicFetching();
-
-    _fetchTimer = Timer.periodic(interval, (Timer timer) {
-      if (_socket != null) {
-        sendCommand(command, data);
-      } else {
-        debugPrint('⚠️ UDP Socket not bound, stopping timer.');
-        stopPeriodicFetching();
-      }
-    });
-    debugPrint(
-        '🕒 Started periodic fetching for "$command" with a ${interval.inMilliseconds}ms interval.');
-  }
-
-  /// 停止定期抓取數據
-  void stopPeriodicFetching() {
-    if (_fetchTimer != null) {
-        _fetchTimer?.cancel();
-        _fetchTimer = null;
-        debugPrint('🛑 Stopped periodic fetching.');
+  /// The logic executed in every "frame" of the send loop.
+  /// It decides which command to send based on priority.
+  void _executeSendLogic() {
+    // Priority 1: One-Time Commands
+    // If there's a critical command waiting, send it immediately and clear it.
+    if (_oneTimeCommand != null) {
+      _sendCommandInternal(_oneTimeCommand!);
+      _oneTimeCommand = null; // Clear after sending
+      return; // End this frame
     }
+
+    // Priority 2: Movement Commands
+    // Check for active joystick movement first.
+    if (_latestJoystickData != null &&
+        (_latestJoystickData!['x'] != 0.0 || _latestJoystickData!['y'] != 0.0)) {
+      _sendCommandInternal('joystick', data: _latestJoystickData);
+      return; // End this frame
+    }
+
+    // If no joystick movement, check for active throttle.
+    if (_latestThrottleData != null && _latestThrottleData! > 0.0) {
+      _sendCommandInternal('throttle', data: _latestThrottleData);
+      return; // End this frame
+    }
+
+    // Priority 3: Heartbeat
+    // If there's nothing else to do, send a heartbeat to keep the connection alive
+    // and let the CC3200 know our address.
+    _sendCommandInternal('heartbeat');
   }
 
-  /// 發送命令到指定的目標
-  void sendCommand(String command, dynamic data) {
-    if (_socket == null || _targetAddress == null) {
-      debugPrint('⚠️ UDP Socket not bound or target address is invalid!');
-      return;
-    }
+  /// Updates the current joystick state. Called by the UI.
+  /// This method ONLY updates the state variable; the send loop does the sending.
+  void updateJoystickState(Map<String, double> data, {required Map<String, double> right}) {
+    _latestJoystickData = data;
+  }
+
+  /// Updates the current throttle state. Called by the UI.
+  void updateThrottleState(double intensity) {
+    _latestThrottleData = intensity;
+  }
+
+  /// Queues a one-time command to be sent with high priority.
+  void sendOneTimeCommand(String command) {
+    _oneTimeCommand = command;
+  }
+
+  /// Internal helper to build and send the final UDP packet.
+  void _sendCommandInternal(String command, {dynamic data}) {
+    if (_socket == null) return;
 
     final String message = _buildMessage(command, data);
     final List<int> dataBytes = utf8.encode(message);
-    _socket!.send(dataBytes, _targetAddress!, targetPort);
-  }
 
-  /// 更新拉桿強度狀態並定期發送
-  void updateThrottleState(double intensity) {
-    _currentThrottleIntensity = intensity;
-    startPeriodicFetching(command: 'throttle', data: intensity);
-  }
-
-  /// 更新搖桿狀態並定期發送
-  void updateJoystickState({Map<String, double>? left, Map<String, double>? right}) {
-    if (right != null) {
-      _currentRightStick = right;
-      startPeriodicFetching(command: 'right_stick', data: right);
-    }
-    // 如果有左搖桿數據，雖然現在不使用，但保留相容性
-    if (left != null) {
-      startPeriodicFetching(command: 'left_stick', data: left);
+    try {
+      _socket!.send(dataBytes, _targetAddress!, targetPort);
+    } catch (e) {
+      developer.log("Failed to send command '$command': $e");
     }
   }
 
-  /// 發送一次性命令
-  void sendOneTimeCommand(String command) {
-    sendCommand(command, null);
-  }
-
+  /// Constructs the final message string with STX/ETX framing.
   String _buildMessage(String command, dynamic data) {
     String payload = command;
-    if (command == 'left_stick' || command == 'right_stick') {
-      if (data is Map) {
-        // 範例: command:x,y
-        payload = '$command:${data['x']},${data['y']}';
-      }
-    } else if (command == 'throttle') {
-      if (data is double) {
-        // 範例: throttle:intensity
-        payload = '$command:$data';
-      }
+
+    if (command == 'joystick' && data is Map<String, double>) {
+      // Format to two decimal places for consistency
+      final String x = data['x']?.toStringAsFixed(2) ?? '0.00';
+      final String y = data['y']?.toStringAsFixed(2) ?? '0.00';
+      // Example payload: "J:0.54,-1.00"
+      payload = 'J:$x,$y';
+    } else if (command == 'throttle' && data is double) {
+      // Example payload: "T:0.75"
+      payload = 'T:${data.toStringAsFixed(2)}';
     }
-    // 使用 STX / ETX 封包包起來
+
+    // Wrap the payload with standard STX (Start of Text) and ETX (End of Text) characters
     return '\x02$payload\x03';
   }
 
-  /// 釋放資源
+  /// Stops the send loop and closes the socket to release all resources.
   void dispose() {
-    stopPeriodicFetching();
-    stopHeartbeat();
+    developer.log('Disposing PillsConnectionService...');
+    stopSendLoop();
     _socket?.close();
     _socket = null;
     if (!_responseController.isClosed) {
       _responseController.close();
     }
-    debugPrint('PillsUdpConnectionService disposed.');
+  }
+
+  /// Stops the main send loop timer.
+  void stopSendLoop() {
+    _sendLoopTimer?.cancel();
+    _sendLoopTimer = null;
   }
 }

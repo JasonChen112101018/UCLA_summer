@@ -75,14 +75,12 @@ class _ControllerScreenState extends State<ControllerScreen> {
                       // 當搖桿移動時，持續更新狀態
                       onMove: (Object? details) {
                         if (details is Map<String, double>) {
-                          connectionService.updateJoystickState(right: details);
+                          connectionService.updateJoystickState(details, right: details);
                         }
                       },
                       // 【最佳實踐】當使用者放開搖桿時，發送歸零狀態
                       onStop: () {
-                        connectionService.updateJoystickState(
-                          right: <String, double>{'x': 0.0, 'y': 0.0},
-                        );
+                        connectionService.updateJoystickState(<String, double>{'x': 0.0, 'y': 0.0}, right: {});
                       },
                     ),
                   ],
