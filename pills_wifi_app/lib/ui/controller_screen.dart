@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/pills_connection_service.dart'; // 確保這是你重構後的 UDP 服務檔案
-import 'widgets/joystick_left.dart';
+import 'widgets/throttle_slider.dart'; // 新增的垂直拉桿 Widget
 import 'widgets/joystick_right.dart';
 
 class ControllerScreen extends StatefulWidget {
@@ -52,30 +52,25 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 ],
               ),
             ),
-            // Dual joysticks
+            // Dual controls: Left is throttle slider, Right is joystick
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 40.0),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: <Widget>[
-                    // ===== 左搖桿 =====
-                    JoystickLeft(
-                      // 當搖桿移動時，持續更新狀態
-                      onMove: (Object? details) {
-                        // 增加型別檢查，確保安全
-                        if (details is Map<String, double>) {
-                          connectionService.updateJoystickState(left: details);
-                        }
+                    // ===== 左邊：垂直拉桿 (控制強度 0-100) =====
+                    ThrottleSlider(
+                      // 當拉桿移動時，持續更新強度
+                      onMove: (intensity) {
+                        connectionService.updateThrottleState(intensity);
                       },
-                      // 【最佳實踐】當使用者放開搖桿時，發送歸零狀態
+                      // 當使用者放開拉桿時，發送歸零狀態
                       onStop: () {
-                        connectionService.updateJoystickState(
-                          left: <String, double>{'x': 0.0, 'y': 0.0},
-                        );
+                        connectionService.updateThrottleState(0.0);
                       },
                     ),
-                    // ===== 右搖桿 =====
+                    // ===== 右邊：搖桿 (保持不變) =====
                     JoystickRight(
                       // 當搖桿移動時，持續更新狀態
                       onMove: (Object? details) {

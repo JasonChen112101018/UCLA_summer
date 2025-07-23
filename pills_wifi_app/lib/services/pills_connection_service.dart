@@ -10,8 +10,10 @@ class PillsConnectionService {
   static final PillsConnectionService _instance =
       PillsConnectionService._internal();
 
-  // Socket & Stream
   RawDatagramSocket? _socket;
+  Timer? _fetchTimer; // 用於定期發送搖桿等重複指令的計時器
+  Timer? _heartbeatTimer; // 用於維持連線的心跳計時器
+
   final StreamController<String> _responseController =
       StreamController<String>.broadcast();
   Stream<String> get responseStream => _responseController.stream;
@@ -20,48 +22,54 @@ class PillsConnectionService {
   final int targetPort = 8080;
   InternetAddress? _targetAddress;
 
-  // 計時器與狀態管理
-  Timer? _sendLoopTimer;
+  // 當前拉桿強度值，供定期發送使用
+  double _currentThrottleIntensity = 0.0;
+  // 當前右搖桿狀態，供定期發送使用
+  Map<String, double> _currentRightStick = {'x': 0.0, 'y': 0.0};
 
-  // ✅ 1. 新增狀態變數，用來追蹤 App 是否正在等待 CC3200 的回應
-  bool _isWaitingForResponse = false;
-  Timer? _responseTimeoutTimer; // 用於處理 CC3200 未回應的超時
-
-  // 搖桿狀態
-  Map<String, double>? _latestLeftStickData;
-  Map<String, double>? _latestRightStickData;
-
+  /// 初始化並綁定 UDP Socket
   Future<bool> init() async {
-    if (_socket != null) return true;
+    // 防止重複初始化
+    if (_socket != null) {
+      debugPrint('UDP Service already initialized.');
+      return true;
+    }
 
     try {
       _targetAddress = InternetAddress(targetIp);
-      _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      debugPrint('UDP Socket bound to local port: ${_socket!.port}');
+    } catch (e) {
+      debugPrint('❌ Invalid target IP address: $e');
+      return false;
+    }
 
-      // 2. 在監聽器中加入處理回應的邏輯
+    try {
+      _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      debugPrint('✅ UDP Socket bound to local port: ${_socket!.port}');
+
       _socket!.listen(
         (RawSocketEvent event) {
           if (event == RawSocketEvent.read) {
             Datagram? datagram = _socket!.receive();
             if (datagram == null) return;
-            
-            // --- 當收到任何來自 CC3200 的回覆時 ---
-            // A. 取消等待超時計時器
-            _responseTimeoutTimer?.cancel();
-            // B. 解鎖發送器，允許發送下一個指令
-            _isWaitingForResponse = false;
-            
+
             final String message = utf8.decode(datagram.data);
-            debugPrint('Response from CC3200: $message. Sender unlocked.');
+            debugPrint(
+                'CC3200 response from ${datagram.address.address}:${datagram.port}: $message');
             _responseController.add(message);
           }
         },
-        onError: (error) { /* ... */ },
-        onDone: () { /* ... */ },
+        onError: (error) {
+          debugPrint('❌ UDP Error: $error');
+          dispose();
+        },
+        onDone: () {
+          debugPrint('❌ UDP Socket closed');
+          dispose();
+        },
       );
 
-      _startSendLoop();
+      // 啟動心跳機制
+      startHeartbeat();
       return true;
     } catch (e) {
       debugPrint('❌ Failed to bind UDP socket: $e');
@@ -69,95 +77,113 @@ class PillsConnectionService {
       return false;
     }
   }
+  
+  /// 啟動心跳，每秒發送一次
+  void startHeartbeat() {
+    stopHeartbeat(); // 先停止舊的，以防萬一
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
+      // 定期發送一個專門的 "heartbeat" 指令
+      sendCommand('heartbeat', null); 
+    });
+    debugPrint('💓 Heartbeat started.');
+  }
 
-  void _startSendLoop() {
-    _sendLoopTimer?.cancel();
-    _sendLoopTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-      // 3. 在發送前，先檢查是否正處於等待狀態
-      if (_isWaitingForResponse) {
-        return; // 如果正在等待，則本次迴圈直接跳過，不發送任何指令
-      }
-      
-      // 以下邏輯與之前類似，但現在有了等待機制的保護
-      bool didSendCommand = false;
+  /// 停止心跳
+  void stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
 
-      if (_latestLeftStickData != null) {
-        final data = _latestLeftStickData!;
-        _sendCommandInternal('left_stick', data);
-        didSendCommand = true;
-        if (data['x'] == 0.0 && data['y'] == 0.0) {
-          _latestLeftStickData = null;
-        }
-      }
-      
-      if (_latestRightStickData != null) {
-        final data = _latestRightStickData!;
-        _sendCommandInternal('right_stick', data);
-        didSendCommand = true;
-        if (data['x'] == 0.0 && data['y'] == 0.0) {
-          _latestRightStickData = null;
-        }
-      }
+  /// 啟動定期抓取數據 (例如搖桿或拉桿)
+  void startPeriodicFetching({
+    required String command,
+    dynamic data,
+    Duration interval = const Duration(milliseconds: 100), // 提高搖桿發送頻率
+  }) {
+    stopPeriodicFetching();
 
-      if (!didSendCommand) {
-        _sendCommandInternal('heartbeat', null);
+    _fetchTimer = Timer.periodic(interval, (Timer timer) {
+      if (_socket != null) {
+        sendCommand(command, data);
+      } else {
+        debugPrint('⚠️ UDP Socket not bound, stopping timer.');
+        stopPeriodicFetching();
       }
     });
-    debugPrint('Unified send loop started with 500ms interval.');
+    debugPrint(
+        '🕒 Started periodic fetching for "$command" with a ${interval.inMilliseconds}ms interval.');
   }
 
-  void updateJoystickState({Map<String, double>? left, Map<String, double>? right}) {
-    if (left != null) _latestLeftStickData = left;
-    if (right != null) _latestRightStickData = right;
+  /// 停止定期抓取數據
+  void stopPeriodicFetching() {
+    if (_fetchTimer != null) {
+        _fetchTimer?.cancel();
+        _fetchTimer = null;
+        debugPrint('🛑 Stopped periodic fetching.');
+    }
   }
 
-  void sendOneTimeCommand(String command, {dynamic data}) {
-    if (_isWaitingForResponse) {
-      debugPrint('Flutter App is busy, ignoring one-time command: $command');
+  /// 發送命令到指定的目標
+  void sendCommand(String command, dynamic data) {
+    if (_socket == null || _targetAddress == null) {
+      debugPrint('⚠️ UDP Socket not bound or target address is invalid!');
       return;
     }
-    _sendCommandInternal(command, data);
-  }
-
-  void _sendCommandInternal(String command, dynamic data) {
-    if (_socket == null || _targetAddress == null) return;
-    
-    // 心跳包是例外，它不應該觸發等待狀態
-    bool isHeartbeat = (command == 'heartbeat');
 
     final String message = _buildMessage(command, data);
     final List<int> dataBytes = utf8.encode(message);
     _socket!.send(dataBytes, _targetAddress!, targetPort);
+  }
 
-    // 4. 如果發送的不是心跳包，則進入等待狀態並啟動超時
-    if (!isHeartbeat) {
-      _isWaitingForResponse = true;
-      _responseTimeoutTimer?.cancel();
-      // 設定一個2秒的超時，如果2秒後沒收到CC3200的回應，就自動解鎖
-      _responseTimeoutTimer = Timer(const Duration(seconds: 2), () {
-        if (_isWaitingForResponse) {
-          debugPrint('Timeout: No response from CC3200. Unlocking sender.');
-          _isWaitingForResponse = false;
-        }
-      });
+  /// 更新拉桿強度狀態並定期發送
+  void updateThrottleState(double intensity) {
+    _currentThrottleIntensity = intensity;
+    startPeriodicFetching(command: 'throttle', data: intensity);
+  }
+
+  /// 更新搖桿狀態並定期發送
+  void updateJoystickState({Map<String, double>? left, Map<String, double>? right}) {
+    if (right != null) {
+      _currentRightStick = right;
+      startPeriodicFetching(command: 'right_stick', data: right);
     }
+    // 如果有左搖桿數據，雖然現在不使用，但保留相容性
+    if (left != null) {
+      startPeriodicFetching(command: 'left_stick', data: left);
+    }
+  }
+
+  /// 發送一次性命令
+  void sendOneTimeCommand(String command) {
+    sendCommand(command, null);
   }
 
   String _buildMessage(String command, dynamic data) {
     String payload = command;
-    if ((command == 'left_stick' || command == 'right_stick') && data is Map<String, double>) {
-      final String x = data['x']?.toStringAsFixed(2) ?? '0.00';
-      final String y = data['y']?.toStringAsFixed(2) ?? '0.00';
-      payload = '5'; 
+    if (command == 'left_stick' || command == 'right_stick') {
+      if (data is Map) {
+        // 範例: command:x,y
+        payload = '$command:${data['x']},${data['y']}';
+      }
+    } else if (command == 'throttle') {
+      if (data is double) {
+        // 範例: throttle:intensity
+        payload = '$command:$data';
+      }
     }
-    return '$payload';
+    // 使用 STX / ETX 封包包起來
+    return '\x02$payload\x03';
   }
 
+  /// 釋放資源
   void dispose() {
-    _sendLoopTimer?.cancel();
-    _responseTimeoutTimer?.cancel();
-    _responseController.close();
+    stopPeriodicFetching();
+    stopHeartbeat();
     _socket?.close();
-    
+    _socket = null;
+    if (!_responseController.isClosed) {
+      _responseController.close();
+    }
+    debugPrint('PillsUdpConnectionService disposed.');
   }
 }
