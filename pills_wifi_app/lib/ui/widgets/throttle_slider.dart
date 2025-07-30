@@ -42,7 +42,7 @@ class _ThrottleSliderState extends State<ThrottleSlider> {
       },
       child: Container(
         width: 120,
-        height: 200,
+        height: 400,
         decoration: BoxDecoration(
           color: Colors.white10,
           borderRadius: BorderRadius.circular(8.0),

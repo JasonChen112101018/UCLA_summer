@@ -3,11 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:developer' as developer;
 
-/// A robust service for managing UDP communication with the capsule endoscopy bridge (CC3200).
-///
-/// This service uses a unified send loop to manage command sending at a fixed rate (FPS),
-/// prioritizing one-time commands, then continuous movement data (joystick/throttle), 
-/// and finally sending a heartbeat to maintain the connection.
+
 class PillsConnectionService {
   // --- Singleton Pattern ---
   factory PillsConnectionService() => _instance;
@@ -164,11 +160,7 @@ class PillsConnectionService {
       // Format to two decimal places for consistency
       final String x = data['x']?.toStringAsFixed(2) ?? '0.00';
       final String y = data['y']?.toStringAsFixed(2) ?? '0.00';
-      // Example payload: "J:0.54,-1.00"
-      payload = 'J:$x,$y';
-    } else if (command == 'throttle' && data is double) {
-      // Example payload: "T:0.75"
-      payload = 'T:${data.toStringAsFixed(2)}';
+      payload = '$x$y';
     }
 
     // Wrap the payload with standard STX (Start of Text) and ETX (End of Text) characters

@@ -37,8 +37,8 @@ class JoystickRight extends StatelessWidget {
         },
         // 以下是 UI 外觀，保持不變
         base: Container(
-          height: 120,
-          width: 120,
+          height: 300,
+          width: 300,
           decoration: const BoxDecoration(
             color: Colors.white10,
             shape: BoxShape.circle,
