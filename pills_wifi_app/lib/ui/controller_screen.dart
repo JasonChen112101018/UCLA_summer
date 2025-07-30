@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../services/pills_connection_service.dart'; // 確保這是你重構後的 UDP 服務檔案
-import 'widgets/throttle_slider.dart'; // 新增的垂直拉桿 Widget
+import '../services/pills_connection_service.dart';
+import 'widgets/throttle_slider.dart';
 import 'widgets/joystick_right.dart';
 
 class ControllerScreen extends StatefulWidget {
@@ -11,20 +11,13 @@ class ControllerScreen extends StatefulWidget {
 }
 
 class _ControllerScreenState extends State<ControllerScreen> {
-  // 直接獲取服務的單例實例
   final PillsConnectionService connectionService = PillsConnectionService();
-
-  // 註： initState 和 dispose 保持原樣是正確的，
-  // 因為服務的生命週期應該由更上層的 Widget 或 App 本身來管理。
-
-  // 移除了舊的 sendControl 方法
 
   Widget buildControlButton(IconData icon, String command) {
     return IconButton(
       iconSize: 32,
       color: Colors.white,
       icon: Icon(icon),
-      // 按鈕是「一次性」指令，直接調用 sendOneTimeCommand
       onPressed: () => connectionService.sendOneTimeCommand(command),
     );
   }
@@ -36,7 +29,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            // Top control row
+            // Top control row (remains the same)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
               child: Row(
@@ -52,35 +45,30 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 ],
               ),
             ),
-            // Dual controls: Left is throttle slider, Right is joystick
+            // Dual controls area
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 40.0),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: <Widget>[
-                    // ===== 左邊：垂直拉桿 (控制強度 0-100) =====
+                    // ===== 左邊：油門拉桿 =====
                     ThrottleSlider(
-                      // 當拉桿移動時，持續更新強度
                       onMove: (intensity) {
-                        connectionService.updateThrottleState(intensity);
+                        connectionService.updateThrottlePercentage(intensity);
                       },
-                      // 當使用者放開拉桿時，發送歸零狀態
                       onStop: () {
-                        connectionService.updateThrottleState(0.0);
+                        // Do nothing. Keep the throttle value as is.
                       },
+                      // =========================
                     ),
-                    // ===== 右邊：搖桿 (保持不變) =====
+                    // ===== 右邊：搖桿 =====
                     JoystickRight(
-                      // 當搖桿移動時，持續更新狀態
-                      onMove: (Object? details) {
-                        if (details is Map<String, double>) {
-                          connectionService.updateJoystickState(details, right: details);
-                        }
+                      onMove: (Map<String, double> details) {
+                        connectionService.updateJoystickState(details);
                       },
-                      // 【最佳實踐】當使用者放開搖桿時，發送歸零狀態
                       onStop: () {
-                        connectionService.updateJoystickState(<String, double>{'x': 0.0, 'y': 0.0}, right: {});
+                        connectionService.updateJoystickState({'x': 0.0, 'y': 0.0});
                       },
                     ),
                   ],

@@ -20,71 +20,103 @@ class _ThrottleSliderState extends State<ThrottleSlider> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      // ===== 邏輯修改開始 =====
       onPanEnd: (details) {
+        // 【修改】移除將強度歸零的 setState。
+        // setState(() {
+        //   _intensity = 0.0;
+        // });
+        
+        // 只通知父元件操作已停止，但保持目前強度值。
         widget.onStop();
       },
       onPanCancel: () {
+        // 【修改】同樣移除這裡的 setState。
+        // setState(() {
+        //   _intensity = 0.0;
+        // });
+
         widget.onStop();
       },
+      // ===== 邏輯修改結束 =====
       onPanUpdate: (details) {
-        // 獲取滑動的垂直位置變化
+        // 這個計算邏輯是正確的，保持不變
         RenderBox renderBox = context.findRenderObject() as RenderBox;
         var localPosition = renderBox.globalToLocal(details.globalPosition);
         double height = renderBox.size.height;
-        // 計算強度：從底部到頂部為 0 到 100
         double newIntensity = 100.0 * (1.0 - localPosition.dy / height);
-        // 限制範圍在 0-100
         newIntensity = newIntensity.clamp(0.0, 100.0);
         setState(() {
           _intensity = newIntensity;
         });
         widget.onMove(_intensity);
       },
+      // UI 外觀部分保持不變
       child: Container(
-        width: 120,
-        height: 400,
+        width: 160,
+        height: 500,
         decoration: BoxDecoration(
-          color: Colors.white10,
-          borderRadius: BorderRadius.circular(8.0),
+          color: Colors.blueGrey.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(80),
+          border: Border.all(
+            color: Colors.lightBlue.withOpacity(0.8),
+            width: 2,
+          ),
         ),
-        child: Stack(
-          children: [
-            // 背景槽，顯示拉桿的範圍
-            Positioned.fill(
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 40.0),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(4.0),
-                ),
-              ),
-            ),
-            // 拉桿指示器，根據強度值移動
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: (_intensity / 100.0) * 180.0, // 根據強度計算底部位置
-              child: Container(
-                height: 20,
-                margin: const EdgeInsets.symmetric(horizontal: 30.0),
-                decoration: BoxDecoration(
-                  color: Colors.white70,
-                  borderRadius: BorderRadius.circular(4.0),
-                ),
-              ),
-            ),
-            // 強度值文字顯示
-            Center(
-              child: Text(
-                '${_intensity.toStringAsFixed(0)}%',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(80),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final double trackHeight = constraints.maxHeight;
+              const double indicatorHeight = 40.0;
+              final double travelDistance = trackHeight - indicatorHeight;
+
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: 30,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: (_intensity / 100.0) * travelDistance,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      height: indicatorHeight,
+                      decoration: BoxDecoration(
+                        color: Colors.lightBlueAccent,
+                        borderRadius: BorderRadius.circular(10.0),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.lightBlueAccent.withOpacity(0.7),
+                            blurRadius: 12,
+                            spreadRadius: 3,
+                          )
+                        ],
+                      ),
+                    ),
+                  ),
+                  Center(
+                    child: Text(
+                      '${_intensity.toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        shadows: [
+                          Shadow(blurRadius: 3, color: Colors.black87)
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );

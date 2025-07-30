@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:developer' as developer;
-
+import 'package:intl/intl.dart';
 
 class PillsConnectionService {
   // --- Singleton Pattern ---
@@ -12,45 +12,37 @@ class PillsConnectionService {
 
   // --- Network & Socket ---
   RawDatagramSocket? _socket;
-  final String targetIp = '192.168.1.1'; // Target IP of the CC3200 AP
-  final int targetPort = 8080;          // Target Port on the CC3200
+  final String targetIp = '192.168.1.1';
+  final int targetPort = 8080;
   InternetAddress? _targetAddress;
 
   // --- Main Sending Loop Timer ---
   Timer? _sendLoopTimer;
 
   // --- State Management ---
-  // These variables hold the latest state from the UI. The loop reads them.
   Map<String, double>? _latestJoystickData;
-  double? _latestThrottleData;
-  String? _oneTimeCommand; // A queue for single, important commands
+  double _latestThrottlePercentage = 0.0; 
+  String? _oneTimeCommand;
 
   // --- Response Stream ---
-  // Listens for any messages sent back from the C2000.
   final StreamController<String> _responseController = StreamController<String>.broadcast();
   Stream<String> get responseStream => _responseController.stream;
 
-  /// Initializes the UDP service, binds the socket, and starts the main communication loop.
-  /// Returns true on success, false on failure.
   Future<bool> init() async {
     if (_socket != null) {
-      developer.log('UDP Service already initialized.');
       return true;
     }
-
     developer.log('Initializing UDP Connection Service...');
     try {
       _targetAddress = InternetAddress(targetIp);
       _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
       developer.log('✅ UDP Socket bound to local port: ${_socket!.port}');
 
-      // Start listening for any incoming messages from the capsule
       _socket!.listen(
         (RawSocketEvent event) {
           if (event == RawSocketEvent.read) {
             Datagram? datagram = _socket!.receive();
             if (datagram == null) return;
-
             final String message = utf8.decode(datagram.data);
             developer.log('⬅️ MSG from Capsule: $message');
             _responseController.add(message);
@@ -58,7 +50,7 @@ class PillsConnectionService {
         },
         onError: (error) {
           developer.log('❌ UDP Socket Error: $error');
-          dispose(); // Clean up on error
+          dispose();
         },
         onDone: () {
           developer.log('UDP Socket closed.');
@@ -66,7 +58,6 @@ class PillsConnectionService {
         },
       );
 
-      // Start the main loop to handle sending commands
       _startSendLoop();
       return true;
     } catch (e) {
@@ -76,98 +67,96 @@ class PillsConnectionService {
     }
   }
 
-  /// Starts the unified send loop. This is the heart of the service.
   void _startSendLoop() {
-    stopSendLoop(); // Ensure no other loop is running
-
-    // Set the desired FPS. 20 FPS is a great, stable target for this application.
+    stopSendLoop();
     const int fps = 20;
     const int intervalMs = 1000 ~/ fps;
-
     _sendLoopTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (timer) {
       _executeSendLogic();
     });
-
-    developer.log('✅ Unified send loop started at $fps FPS (${intervalMs}ms interval).');
+    developer.log('✅ Unified send loop started at $fps FPS.');
   }
 
-  /// The logic executed in every "frame" of the send loop.
-  /// It decides which command to send based on priority.
+  /// REWRITTEN: 完全重寫的核心發送邏輯
   void _executeSendLogic() {
-    // Priority 1: One-Time Commands
-    // If there's a critical command waiting, send it immediately and clear it.
+    // 優先度 1: 一次性指令 (例如 'start', 'stop')
     if (_oneTimeCommand != null) {
-      _sendCommandInternal(_oneTimeCommand!);
-      _oneTimeCommand = null; // Clear after sending
-      return; // End this frame
+      _sendCommandInternal(_oneTimeCommand!); // 直接發送指令字串
+      _oneTimeCommand = null;
+      return;
     }
 
-    // Priority 2: Movement Commands
-    // Check for active joystick movement first.
+    // 優先度 2: 搖桿移動指令
+    // 檢查搖桿是否有活動 (x 或 y 不為 0)
     if (_latestJoystickData != null &&
         (_latestJoystickData!['x'] != 0.0 || _latestJoystickData!['y'] != 0.0)) {
-      _sendCommandInternal('joystick', data: _latestJoystickData);
-      return; // End this frame
+      
+      // 計算最終的 x, y 值 (搖桿 * 油門百分比)
+      final double throttleMultiplier = _latestThrottlePercentage / 100.0;
+      final double finalX = (_latestJoystickData!['x'] ?? 0.0) * throttleMultiplier;
+      final double finalY = (_latestJoystickData!['y'] ?? 0.0) * throttleMultiplier;
+
+      final Map<String, double> finalMoveData = {'x': finalX, 'y': finalY};
+      
+      // 使用一個新的內部指令 'move' 來觸發新的訊息格式
+      _sendCommandInternal('move', data: finalMoveData);
+      return;
     }
 
-    // If no joystick movement, check for active throttle.
-    if (_latestThrottleData != null && _latestThrottleData! > 0.0) {
-      _sendCommandInternal('throttle', data: _latestThrottleData);
-      return; // End this frame
-    }
-
-    // Priority 3: Heartbeat
-    // If there's nothing else to do, send a heartbeat to keep the connection alive
-    // and let the CC3200 know our address.
+    // 優先度 3: 心跳 (當沒有任何操作時)
     _sendCommandInternal('heartbeat');
   }
 
-  /// Updates the current joystick state. Called by the UI.
-  /// This method ONLY updates the state variable; the send loop does the sending.
-  void updateJoystickState(Map<String, double> data, {required Map<String, double> right}) {
+  void updateJoystickState(Map<String, double> data) {
     _latestJoystickData = data;
   }
 
-  /// Updates the current throttle state. Called by the UI.
-  void updateThrottleState(double intensity) {
-    _latestThrottleData = intensity;
+  void updateThrottlePercentage(double percentage) {
+    _latestThrottlePercentage = percentage;
   }
 
-  /// Queues a one-time command to be sent with high priority.
   void sendOneTimeCommand(String command) {
     _oneTimeCommand = command;
   }
 
-  /// Internal helper to build and send the final UDP packet.
   void _sendCommandInternal(String command, {dynamic data}) {
-    if (_socket == null) return;
+    if (_socket == null || _targetAddress == null) return;
 
     final String message = _buildMessage(command, data);
-    final List<int> dataBytes = utf8.encode(message);
+    if (message.isEmpty) return;
 
+    final List<int> dataBytes = utf8.encode(message);
     try {
       _socket!.send(dataBytes, _targetAddress!, targetPort);
     } catch (e) {
-      developer.log("Failed to send command '$command': $e");
+      developer.log("❌ Failed to send command '$command': $e");
     }
   }
 
-  /// Constructs the final message string with STX/ETX framing.
   String _buildMessage(String command, dynamic data) {
-    String payload = command;
+    switch (command) {
+      case 'move':
+        if (data is Map<String, double>) {
+          // 使用 intl 套件來格式化數字，確保總是顯示正負號
+          final xFormatter = NumberFormat('+0.00;-0.00');
+          final yFormatter = NumberFormat('+0.00;-0.00');
 
-    if (command == 'joystick' && data is Map<String, double>) {
-      // Format to two decimal places for consistency
-      final String x = data['x']?.toStringAsFixed(2) ?? '0.00';
-      final String y = data['y']?.toStringAsFixed(2) ?? '0.00';
-      payload = '$x$y';
+          final String x = xFormatter.format(data['x'] ?? 0.0);
+          final String y = yFormatter.format(data['y'] ?? 0.0);
+          
+          // 組合成最終格式
+          return '\x02$x''$y\x03';
+        }
+        return '';
+      
+      case 'heartbeat':
+        return '\x02$command\x03';
+
+      default:
+        return '';
     }
-
-    // Wrap the payload with standard STX (Start of Text) and ETX (End of Text) characters
-    return '\x02$payload\x03';
   }
-
-  /// Stops the send loop and closes the socket to release all resources.
+  
   void dispose() {
     developer.log('Disposing PillsConnectionService...');
     stopSendLoop();
@@ -178,7 +167,6 @@ class PillsConnectionService {
     }
   }
 
-  /// Stops the main send loop timer.
   void stopSendLoop() {
     _sendLoopTimer?.cancel();
     _sendLoopTimer = null;

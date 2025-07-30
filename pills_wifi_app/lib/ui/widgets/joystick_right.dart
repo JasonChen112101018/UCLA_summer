@@ -13,43 +13,55 @@ class JoystickRight extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ 使用 GestureDetector 來偵測手勢的結束
     return GestureDetector(
-      // 當使用者手指抬起，拖曳手勢結束時觸發
       onPanEnd: (details) {
         onStop();
       },
-      // 當手勢被系統取消時也觸發 onStop，確保歸位
       onPanCancel: () {
         onStop();
       },
       child: Joystick(
         mode: JoystickMode.all,
-        // ✅ 使用套件本身提供的 listener 來處理 onMove
         listener: (details) {
-          // 在這裡將 StickDragDetails 轉換為我們需要的 Map 格式
           final Map<String, double> moveDetails = {
-            'x': details.x,
-            'y': details.y,
+            'x': details.y * -1,
+            'y': details.x * -1, // 反轉 Y 軸以符合 UI 的方向
           };
-          // 傳遞轉換後的資料
           onMove(moveDetails);
         },
-        // 以下是 UI 外觀，保持不變
+        // ===== UI 外觀修改 =====
         base: Container(
-          height: 300,
-          width: 300,
-          decoration: const BoxDecoration(
-            color: Colors.white10,
+          // 增加基礎尺寸
+          height: 450,
+          width: 450,
+          decoration: BoxDecoration(
+            // 使用半透明的藍灰色作為底色
+            // ignore: deprecated_member_use
+            color: Colors.blueGrey.withOpacity(0.3),
             shape: BoxShape.circle,
+            // 增加藍色外框線，讓邊界更清楚
+            border: Border.all(
+              // ignore: deprecated_member_use
+              color: Colors.lightBlue.withOpacity(0.8),
+              width: 2,
+            ),
           ),
         ),
         stick: Container(
-          height: 40,
-          width: 40,
+          // 同步增加搖桿頭的尺寸
+          height: 60,
+          width: 60,
           decoration: const BoxDecoration(
-            color: Colors.white70,
+            // 使用更明亮的藍色作為搖桿頭顏色
+            color: Colors.lightBlueAccent,
             shape: BoxShape.circle,
+            boxShadow: [ // 增加陰影使其更有立體感
+              BoxShadow(
+                color: Colors.black45,
+                blurRadius: 8,
+                offset: Offset(2, 2),
+              )
+            ]
           ),
         ),
       ),

@@ -1,11 +1,9 @@
 /*
-  CC3200 UDP to Serial1 Gateway
-
-  This sketch creates a Wi-Fi Access Point and acts as a bridge
-  between UDP and UART (Serial1).
-
-  - Data received via UDP is forwarded to Serial1.
-  - Data received from Serial1 is forwarded via UDP to the last known remote client.
+  CC3200 Asynchronous UDP <-> UART Gateway
+  - Corrected for non-blocking UART receive and baud rate match.
+  - Forwards all non-heartbeat UDP packets to Serial1.
+  - Forwards all complete Serial1 data packets (delimited by STX/ETX)
+    to the last known UDP client.
 */
 
 #ifndef __CC3200R1M1RGC__
@@ -14,101 +12,130 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-// --- Wi-Fi AP Settings ---
+// --- Wi-Fi & UDP Settings ---
 char ssid[] = "MyEnergiaAP";
-char password[] = "password"; // Must be 8-63 characters
-
-// --- UDP Settings ---
-unsigned int localPort = 8080; // Port to listen for UDP packets on
+char password[] = "password";
+unsigned int localPort = 8080;
 WiFiUDP Udp;
 
 // --- Buffers ---
-char packetBuffer[255]; // Buffer for incoming UDP packet
-char uartBuffer[255];   // Buffer for incoming UART data
+char packetBuffer[255]; // For incoming UDP packets
+char uartBuffer[255];   // For assembling incoming UART data
+size_t uartBufferIndex = 0; // Index for the UART buffer
 
 // --- Remote Client Info ---
-// We need to store the IP and port of the last UDP client to know where to send UART data
 IPAddress remoteUdpIp;
-unsigned int remoteUdpPort = 0;
+unsigned int remoteUdpPort = 0; // Starts at 0, populated by the first UDP packet
 
+// =================================================================
+// SETUP FUNCTION
+// =================================================================
 void setup() {
-  // 1. Initialize Serial for debugging
+  // Start the primary serial port for debugging output
   Serial.begin(115200);
-  Serial.println("\nUDP <-> UART Gateway starting...");
+  Serial.println("\nAsync UDP <-> UART Gateway starting...");
 
-  // 2. Initialize Serial1 for the external device
-  // IMPORTANT: Make sure this baud rate matches your external device
-  Serial1.begin(2500);
-  Serial.println("Serial1 started at 2500 baud.");
+  // Start the secondary serial port for communication with the C2000
+  // CORRECTED BAUD RATE to match C2000
+  Serial1.begin(100000);
+  Serial.println("Serial1 started at 100000 baud.");
 
-  // 3. Create the Wi-Fi Access Point
-  Serial.print("Creating access point named: ");
-  Serial.println(ssid);
+  // Configure Wi-Fi as an Access Point
   WiFi.beginNetwork((char *)ssid, (char *)password);
+  Serial.print("Creating access point...");
   while (WiFi.localIP() == INADDR_NONE) {
     Serial.print(".");
     delay(300);
   }
-  Serial.println("Access Point created successfully.");
+  Serial.println("\nAccess Point Ready.");
   printWifiStatus();
 
-  // 4. Start the UDP listener
+  // Begin listening for UDP packets
   Udp.begin(localPort);
-  Serial.print("Listening for UDP packets on port ");
+  Serial.print("Listening on UDP port ");
   Serial.println(localPort);
-  Serial.println("---------------------------------------------------------");
+  Serial.println("------------------------------------");
+  Serial.println("Waiting for first packet from client to establish return address...");
 }
 
+// =================================================================
+// MAIN LOOP
+// =================================================================
 void loop() {
-  // --- Path 1: Check for UDP packets and forward to UART ---
+  // --- Path 1: App -> C2000 (UDP -> UART) ---
   int packetSize = Udp.parsePacket();
   if (packetSize > 0) {
+    // Store the client's address to know where to send replies
     remoteUdpIp = Udp.remoteIP();
     remoteUdpPort = Udp.remotePort();
-    
-    int len = Udp.read(packetBuffer, packetSize); // Read exact packet size
-    if (len > 0) {
-      packetBuffer[len] = '\0';
-      const char* heartbeatMsg = "heartbeat";
 
-      // Check if the received packet is a heartbeat
+    int len = Udp.read(packetBuffer, packetSize);
+    if (len > 0) {
+      packetBuffer[len] = '\0'; // Null-terminate for string functions
+      const char* heartbeatMsg = "\x02heartbeat\x03";
+
+      // Ignore heartbeat messages, forward everything else
       if (strcmp(packetBuffer, heartbeatMsg) != 0) {
-        Serial.print("Received command, forwarding to Serial1: ");
+        // Forward the valid command to the C2000
+        Serial.print("UDP -> UART: ");
         Serial.println(packetBuffer);
         Serial1.write((uint8_t*)packetBuffer, len);
       }
     }
   }
 
-  // --- Path 2: Check for UART data and forward to UDP ---
-  if (Serial1.available() > 0) {
-    // Data has arrived from the external device
-    Serial.print("Received data from Serial1. Forwarding to UDP client...");
-    
-    // Check if we have a valid UDP client to send to
+  // --- Path 2: C2000 -> App (UART -> UDP) ---
+  // This is the new, non-blocking logic to prevent latency.
+  while (Serial1.available() > 0) {
+    // Don't process if we don't know who the client is yet
     if (remoteUdpPort == 0) {
-      Serial.println(" No UDP client known. Discarding data.");
-      while(Serial1.available()) {
-        Serial1.read();
-      }
+        while(Serial1.available()) { Serial1.read(); } // Discard data
+        return; 
     }
 
-    size_t len = Serial1.readBytes(uartBuffer, sizeof(uartBuffer));
-    for (int i=0;i<len;i++){
-      Serial.print(uartBuffer[i], BIN);  
+    char receivedChar = (char)Serial1.read();
+
+    // Check for Start of Text (STX) character to begin a new packet
+    if (receivedChar == '\x02') {
+      // Reset buffer for a new packet
+      uartBufferIndex = 0; 
+    } 
+    // Check for End of Text (ETX) character to finalize the packet
+    else if (receivedChar == '\x03') {
+      if (uartBufferIndex > 0) { // Ensure the packet is not empty
+        
+        // --- A complete packet has been received ---
+
+        // For debugging: null-terminate and print the received string
+        uartBuffer[uartBufferIndex] = '\0';
+        Serial.print("UART -> UDP: ");
+        Serial.println(uartBuffer);
+        
+        // Send the packet to the app via UDP
+        Udp.beginPacket(remoteUdpIp, remoteUdpPort);
+        Udp.write((uint8_t*)uartBuffer, uartBufferIndex);
+        Udp.endPacket();
+      }
+      // Reset buffer index for the next packet, whether it was empty or not
+      uartBufferIndex = 0;
+    } 
+    // It's a regular data character
+    else {
+      // Add the character to our assembly buffer if there's space
+      if (uartBufferIndex < (sizeof(uartBuffer) - 1)) {
+        uartBuffer[uartBufferIndex] = receivedChar;
+        uartBufferIndex++;
+      } else {
+        // Buffer overflow protection: something is wrong, reset.
+        uartBufferIndex = 0;
+      }
     }
-    Serial.println();
-    
-    // Send the collected data as a single UDP packet
-    Udp.beginPacket(remoteUdpIp, remoteUdpPort);
-    Udp.write((uint8_t*)uartBuffer, len);
-    Udp.endPacket();
-    Serial.print(" Sent ");
-    Serial.print(len);
-    Serial.print(" byte.");
   }
 }
 
+// =================================================================
+// HELPER FUNCTION
+// =================================================================
 void printWifiStatus() {
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());

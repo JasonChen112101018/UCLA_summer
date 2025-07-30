@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  intl: ^0.19.0
 
   # flutter_joystick ^0.2.2 已經是最新版本，無需變更
   flutter_joystick: ^0.2.2

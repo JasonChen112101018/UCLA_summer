@@ -1,6 +1,7 @@
 analyzer:
   errors:
     always_specify_types: ignore
+    deprecated_member_use: ignore ignore
 include: package:flutter_lints/flutter.yaml
 
 linter:
