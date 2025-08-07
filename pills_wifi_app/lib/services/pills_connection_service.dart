@@ -4,6 +4,21 @@ import 'dart:io';
 import 'dart:developer' as developer;
 import 'package:intl/intl.dart';
 
+// Data model for structured data from the MCU.
+class McuData {
+
+  McuData({
+    this.dutyCycle = 0.0,
+    this.accelX = 0.0,
+    this.accelY = 0.0,
+    this.accelZ = 0.0,
+  });
+  final double dutyCycle;
+  final double accelX;
+  final double accelY;
+  final double accelZ;
+}
+
 class PillsConnectionService {
   // --- Singleton Pattern ---
   factory PillsConnectionService() => _instance;
@@ -21,12 +36,13 @@ class PillsConnectionService {
 
   // --- State Management ---
   Map<String, double>? _latestJoystickData;
-  double _latestThrottlePercentage = 0.0; 
+  double _latestThrottlePercentage = 0.0;
   String? _oneTimeCommand;
 
   // --- Response Stream ---
-  final StreamController<String> _responseController = StreamController<String>.broadcast();
-  Stream<String> get responseStream => _responseController.stream;
+  // Broadcasts structured McuData objects instead of raw strings.
+  final StreamController<McuData> _responseController = StreamController<McuData>.broadcast();
+  Stream<McuData> get responseStream => _responseController.stream;
 
   Future<bool> init() async {
     if (_socket != null) {
@@ -44,8 +60,8 @@ class PillsConnectionService {
             Datagram? datagram = _socket!.receive();
             if (datagram == null) return;
             final String message = utf8.decode(datagram.data);
-            developer.log('⬅️ MSG from Capsule: $message');
-            _responseController.add(message);
+            // New parsing logic for incoming messages.
+            _parseMcuMessage(message);
           }
         },
         onError: (error) {
@@ -67,9 +83,34 @@ class PillsConnectionService {
     }
   }
 
+  // New method to parse messages from the MCU.
+  void _parseMcuMessage(String message) {
+    if (message.startsWith('\x02') && message.endsWith('\x03')) {
+      final String payload = message.substring(1, message.length - 1);
+      final RegExp regex = RegExp(r'([+-][0-9]+\.[0-9]{2})');
+      final List<Match> matches = regex.allMatches(payload).toList();
+
+      if (matches.length == 4) {
+        try {
+          final double dutyCycle = double.parse(matches[0].group(0)!);
+          final double accelX = double.parse(matches[1].group(0)!);
+          final double accelY = double.parse(matches[2].group(0)!);
+          final double accelZ = double.parse(matches[3].group(0)!);
+
+          final mcuData = McuData(dutyCycle: dutyCycle, accelX: accelX, accelY: accelY, accelZ: accelZ);
+          _responseController.add(mcuData);
+        } catch (e) {
+          developer.log('❌ Error parsing MCU data: $e', name: 'MCU.Parse');
+        }
+      }
+    } else {
+       developer.log('⬅️ Received non-standard message: $message', name: 'MCU.Raw');
+    }
+  }
+
   void _startSendLoop() {
     stopSendLoop();
-    const int fps = 20;
+    const int fps = 1;
     const int intervalMs = 1000 ~/ fps;
     _sendLoopTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (timer) {
       _executeSendLogic();
@@ -77,33 +118,22 @@ class PillsConnectionService {
     developer.log('✅ Unified send loop started at $fps FPS.');
   }
 
-  /// REWRITTEN: 完全重寫的核心發送邏輯
   void _executeSendLogic() {
-    // 優先度 1: 一次性指令 (例如 'start', 'stop')
     if (_oneTimeCommand != null) {
-      _sendCommandInternal(_oneTimeCommand!); // 直接發送指令字串
+      _sendCommandInternal(_oneTimeCommand!);
       _oneTimeCommand = null;
       return;
     }
 
-    // 優先度 2: 搖桿移動指令
-    // 檢查搖桿是否有活動 (x 或 y 不為 0)
     if (_latestJoystickData != null &&
         (_latestJoystickData!['x'] != 0.0 || _latestJoystickData!['y'] != 0.0)) {
-      
-      // 計算最終的 x, y 值 (搖桿 * 油門百分比)
       final double throttleMultiplier = _latestThrottlePercentage / 100.0;
       final double finalX = (_latestJoystickData!['x'] ?? 0.0) * throttleMultiplier;
       final double finalY = (_latestJoystickData!['y'] ?? 0.0) * throttleMultiplier;
-
       final Map<String, double> finalMoveData = {'x': finalX, 'y': finalY};
-      
-      // 使用一個新的內部指令 'move' 來觸發新的訊息格式
       _sendCommandInternal('move', data: finalMoveData);
       return;
     }
-
-    // 優先度 3: 心跳 (當沒有任何操作時)
     _sendCommandInternal('heartbeat');
   }
 
@@ -121,10 +151,8 @@ class PillsConnectionService {
 
   void _sendCommandInternal(String command, {dynamic data}) {
     if (_socket == null || _targetAddress == null) return;
-
     final String message = _buildMessage(command, data);
     if (message.isEmpty) return;
-
     final List<int> dataBytes = utf8.encode(message);
     try {
       _socket!.send(dataBytes, _targetAddress!, targetPort);
@@ -137,26 +165,23 @@ class PillsConnectionService {
     switch (command) {
       case 'move':
         if (data is Map<String, double>) {
-          // 使用 intl 套件來格式化數字，確保總是顯示正負號
           final xFormatter = NumberFormat('+0.00;-0.00');
           final yFormatter = NumberFormat('+0.00;-0.00');
-
           final String x = xFormatter.format(data['x'] ?? 0.0);
           final String y = yFormatter.format(data['y'] ?? 0.0);
-          
-          // 組合成最終格式
-          return '\x02$x''$y\x03';
+          return '\x02$x$y\x03';
         }
         return '';
-      
       case 'heartbeat':
         return '\x02$command\x03';
-
+      case 'start':
+      case 'stop':
+        return '\x02$command\x03';
       default:
         return '';
     }
   }
-  
+
   void dispose() {
     developer.log('Disposing PillsConnectionService...');
     stopSendLoop();

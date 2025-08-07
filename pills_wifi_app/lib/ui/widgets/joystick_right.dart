@@ -24,8 +24,8 @@ class JoystickRight extends StatelessWidget {
         mode: JoystickMode.all,
         listener: (details) {
           final Map<String, double> moveDetails = {
-            'x': details.y * -1,
-            'y': details.x * -1, // 反轉 Y 軸以符合 UI 的方向
+            'x': details.x,
+            'y': details.y * -1,
           };
           onMove(moveDetails);
         },
