@@ -3,13 +3,13 @@ This repository presents a highly adaptable framework aimed at solving a key cha
 
 The architecture integrates a cross-platform mobile interface (Flutter) with a low-latency wireless communication link (UDP) and a flexible embedded systems backend. This creates a powerful platform for a wide range of clinical and research applications, including:
 
-Minimally Invasive Surgery: Remotely guiding steerable catheters or endoscopic tools.
+1. Minimally Invasive Surgery: Remotely guiding steerable catheters or endoscopic tools.
 
-Advanced Prosthetics: Developing intuitive, mobile-based control systems for robotic limbs.
+2. Advanced Prosthetics: Developing intuitive, mobile-based control systems for robotic limbs.
 
-Remote Diagnostics: Operating portable imaging or sensing devices in point-of-care scenarios.
+3. Remote Diagnostics: Operating portable imaging or sensing devices in point-of-care scenarios.
 
-In-Vivo Devices: Navigating miniature capsules for internal sensing and diagnostics.
+4. In-Vivo Devices: Navigating miniature capsules for internal sensing and diagnostics.
 
 Ultimately, this project serves as a robust proof-of-concept for developing the next generation of mobile-controlled medical technology.
 
