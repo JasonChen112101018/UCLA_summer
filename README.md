@@ -57,7 +57,7 @@ The provided code configures the CC3200 board to function as a wireless gateway.
 1.  **IDE**: Install [**Energia IDE**](http://energia.nu/download/), which is a fork of Arduino IDE for Texas Instruments microcontrollers.
 
 ### Configuration and Upload
-1.  **Open the Sketch**: Open the `CC3200_UDP.cpp` file in the Energia IDE.
+1.  **Open the Sketch**: Open the `CC3200_UART.cpp` file in the Energia IDE.
 2.  **Configure WiFi (Optional)**: If you wish to change the WiFi network name or password, modify these lines at the top of the file:
     ```cpp
     char ssid[] = "MyEnergiaAP";
