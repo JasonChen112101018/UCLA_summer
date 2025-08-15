@@ -2,7 +2,7 @@
 
 This repository contains four main components:
 1.  A **Flutter application** that serves as a remote controller.
-2.  An **Energia IDE sketch** for a CC3200 board that acts as a UDP-to-UART gateway.
+2.  An **Energia IDE sketch** for a CC3200 board that acts as a UDP-UART bidirectional gateway.
 3.  **MATLAB Simulink models** for a C2000 F28379D microcontroller for motor control and sensor data acquisition.
 ---
 ## 1. Flutter Mobile Application
@@ -57,7 +57,7 @@ The provided code configures the CC3200 board to function as a wireless gateway.
 1.  **IDE**: Install [**Energia IDE**](http://energia.nu/download/), which is a fork of Arduino IDE for Texas Instruments microcontrollers.
 
 ### Configuration and Upload
-1.  **Open the Sketch**: Open the `.ino` file in the Energia IDE.
+1.  **Open the Sketch**: Open the `CC3200_UDP.cpp` file in the Energia IDE.
 2.  **Configure WiFi (Optional)**: If you wish to change the WiFi network name or password, modify these lines at the top of the file:
     ```cpp
     char ssid[] = "MyEnergiaAP";
@@ -74,12 +74,11 @@ This section contains Simulink models designed for the TI C2000 F28379D MCU.
 Please note that these models are currently in development, may not function correctly, and have not yet been integrated into a final, unified firmware.
 
 ### Models
-1.  **Motor Controller**: Receives commands via UART (from the CC3200) to control a motor.
-2.  **MPU6050 Data Acquisition**: A separate model for acquiring data from an MPU6050 sensor.
+1.  **wifi-sci-receive.slx**: Receives commands via UART (from the CC3200) to control a motor.
+2.  **i2c_example.slx**: A separate model for acquiring data from an MPU6050 sensor.
 
 ### Environment Setup
-1.  **Software**: **MATLAB** with **Simulink**, **Embedded Coder**, and the **Motor Control Blockset** for C2000 MCUs.
-2.  **Hardware**: TI C2000 F28379D LaunchPad development board.
+2.  **Hardware**: TI C2000 F28379D LaunchPad development board、motion tracking device(mpu6050)、driver(DRV8833)、motor
 
 ### Usage
 Open the `.slx` files in MATLAB Simulink. Use the Embedded Coder to generate code and flash it to the F28379D LaunchPad.
