@@ -85,7 +85,3 @@ Please note that these models are currently in development, may not function cor
 
 ### Usage
 Open the `.slx` files in MATLAB Simulink. Use the Embedded Coder to generate code and flash it to the F28379D LaunchPad.
-
----
-## License
-This project is distributed under the MIT License.
