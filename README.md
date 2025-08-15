@@ -1,5 +1,17 @@
 # Wireless Motor Controller Project
-This repository showcases a highly adaptable framework for the real-time, remote control of hardware devices.The architecture integrates a cross-platform mobile interface built with Flutter, a low-latency UDP communication link over WiFi, and a flexible embedded systems backend. It is designed to be a versatile platform capable of controlling a wide range of mechatronic systems, such as a robotic arm,or a Wireless Sensing Capsule (WSC). This advanced application demonstrates the system's potential in the field of non-invasive medical diagnostics.
+This repository presents a highly adaptable framework aimed at solving a key challenge in modern biomedical engineering: the need for precise, real-time, untethered control of medical and diagnostic hardware.
+
+The architecture integrates a cross-platform mobile interface (Flutter) with a low-latency wireless communication link (UDP) and a flexible embedded systems backend. This creates a powerful platform for a wide range of clinical and research applications, including:
+
+Minimally Invasive Surgery: Remotely guiding steerable catheters or endoscopic tools.
+
+Advanced Prosthetics: Developing intuitive, mobile-based control systems for robotic limbs.
+
+Remote Diagnostics: Operating portable imaging or sensing devices in point-of-care scenarios.
+
+In-Vivo Devices: Navigating miniature capsules for internal sensing and diagnostics.
+
+Ultimately, this project serves as a robust proof-of-concept for developing the next generation of mobile-controlled medical technology.
 
 [this is the demo video](https://youtu.be/u3NLdefgTfE)
 
