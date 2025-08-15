@@ -33,21 +33,22 @@ This project was developed using Flutter. If you are new to Flutter, the officia
 
 lib/
 
-├── main.dart               App entry point, handles service initialization and app lifecycle
+├── main.dart               #App entry point, handles service initialization and app lifecycle
 
 ├── services/
 
-│   └── pills_connection_service.dart Core service: Handles all UDP communication, data packing/parsing logic
+│   └── pills_connection_service.dart #Core service: Handles all UDP communication, data packing/parsing logic
 
 └── ui/
 
-├── controller_screen.dart  Main screen: Assembles all UI components, acts as a bridge between UI and service layers
+├── controller_screen.dart  #Main screen: Assembles all UI components, acts as a bridge between UI and service layers
 
 └── widgets/
 
-├── joystick_right.dart The right-side joystick widget
+├── joystick_right.dart #The right-side joystick widget
 
-└── throttle.dart     The left-side throttle widget
+└── throttle.dart     #The left-side throttle widget
+
 ---
 ## 2. CC3200 Firmware (Energia IDE)
 The provided code configures the CC3200 board to function as a wireless gateway. It creates a WiFi Access Point and forwards UDP packets to its UART serial port (and vice-versa).
