@@ -78,7 +78,7 @@ Please note that these models are currently in development, may not function cor
 
 ### Models
 1.  **wifi-sci-receive.slx**: Receives commands via UART (from the CC3200) to control a motor.
-2.  **i2c_example.slx**: A separate model for acquiring data from an MPU6050 sensor.(may have something wrong in the model)
+2.  **i2c_example.slx**: A model modified from mathwork"c28x_i2c_sensor" example for acquiring data from an MPU6050 sensor.(but may have something wrong in this modified model)
 
 ### Environment Setup
 2.  **Hardware**: TI C2000 F28379D LaunchPad development board、motion tracking device(mpu6050)、driver(DRV8833)、motor
